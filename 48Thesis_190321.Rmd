@@ -1,0 +1,833 @@
+---
+title: "Additional analysis used in the thesis"
+author: "Casper Sahl Poulsen"
+date: '21032019'
+output:
+  html_document:
+    toc: yes
+    toc_depth: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE, 
+                      message = FALSE,
+                      fig.align = "center")
+```
+
+## Introduction
+The purpose of the following code is to assess the effect of library preparation using KAPA (PCR free), NEXTflex (PCR free), and Nextera (PCR step), and Illumina sequencing platforms (HiSeq and NextSeq) on two different microbial communities. Raw data is available online (Include the ENA reference). Samples have been quality processed and mapped with MGmapper extracting read counts mapping to the different genera.  
+
+
+**Explanation of samples naming in the taxonomy table**  
+DTU: Performed at the Technical university of Denmark followed by the year of sampling.
+LPSX: Part of the study on library preparation and sequencing platform study.
+HX: Part of the handling experiment study included here to represent one library preparation sequencing platform method.
+P1 & P2: Pig feces 1 and 2.
+S1 and S2: Sewage 1 and 2.
+KA: Kapa library preparation.
+NF: NEXTflex library preparation.
+NX: Nextera library preparation (Can both be NX1 and NX2 representing the same process to investigate variance associated with redoing library preparation and sequencing).
+HI: HiSeq.
+NS: NextSeq.
+0h: Direct processing after sample collection, samples were not stored.
+64h_80C: After sample collection alliquouts of the same sample as the one processed directly were stored at -80°C for 64 h.
+a, b, c: Indicating storage replicates, only duplicates where included in this study.
+MG_XXX: Internal metagenomics sample number.
+  
+**Metadata**  
+Contains information on how the samples were processed, sequencing performance, and info on mapping to different databases
+
+**Feature**
+Contains taxonomic feature information  
+
+
+### Packages 
+```{r}
+#Install knitr package
+#install.packages("knitr")
+
+#Update bioconductor
+#if (!requireNamespace("BiocManager"))
+#    install.packages("BiocManager")
+#BiocManager::install()
+
+#install.packages("ggplot2")
+library(ggplot2) #Data visualization, based on grammar of graphics. help(package="ggplot2")  
+#install.packages("ggthemes")
+library(ggthemes) #Extra themes, scales and geoms for ggplot2. help(package="ggthemes")  
+#install.packages("vegan")
+library(vegan) #Community ecology package, ordination methods, diversity analysis and other functions for community and vegetation ecologists. help(package="vegan")
+library(gridExtra)
+#install.packages("reshape2")
+library(reshape2)
+#install.packages("tidyr")
+library(tidyr)
+#install.packages("knitr")
+library(knitr)
+#install.packages("stringr")
+library(stringr)
+#install.packages("cowplot")
+library(cowplot)
+#install.packages("compositions")
+library(compositions) #The package provides functions for the consistent analysis of compositional data (e.g. portions of substances) and positive numbers (e.g. concentrations) in the way proposed by Aitchison and Pawlowsky-Glahn. Includes the clr function. help(package="compositions")
+#install.packages("zCompositions")
+library(zCompositions) #Include cmultRepl function to estimate zeroes 
+#install.packages("car")
+library(car) # Companion to applied regression includes Levene's test. help(package="car")
+#install.packages("robCompositions")
+library(robCompositions) #help(package="robCompositions")
+#install.packages("psych") #describeBy function
+library(psych)
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("mixOmics", version = "3.8")
+#install.packages("mixOmics") #Extends upon some of the function from robCompositions 
+library(mixOmics)
+#install.packages("pheatmap")
+library(pheatmap) # Implementation of heatmaps that offers more control over dimensions and appearance help(package="pheatmap")
+#install.packages("RColorBrewer")
+library(RColorBrewer) #Used to make the Heatmap colors
+#install.packages("FSA")
+library(FSA) #A variety of simple fish stock assessment methods. Includes the Dunne non-parametric follow-up test help(package="FSA")
+#install.packages("Rmisc")
+library(Rmisc)
+#install.packages("dplyr")
+library(dplyr) #A grammar of data manipulation. A fast, consistent tool for working with data frame like objects. help(package="dplyr")
+#install.packages("gridExtra")
+```
+
+## Read in data
+```{r}
+Tax <- read.delim(file="TaxonomyRaw20180925.txt", check.names=FALSE, stringsAsFactors=FALSE, strip.white=TRUE)
+Metadata <- read.delim(file="Metadata20180925.txt", check.names=FALSE, stringsAsFactors=FALSE, strip.white=TRUE)
+Feature <- read.delim(file="FeatureShort20180925.txt", check.names=FALSE, stringsAsFactors=FALSE, strip.white=TRUE)
+```
+
+## Analysis
+Chunks can be run by themselves or consecutively
+
+### Multivariate ANOVA based on dissimilarities (Adonis)
+Investigating all unspiked samples
+```{r}
+rm(list=setdiff(ls(), c("Metadata", "Feature", "Tax")))
+
+#Subset data pig feces 1 and 2 (P1, P2), Sewage 1 and 2 (S1, S2), or spiked unspiked
+Subset<- c("Allunspiked", "PFunspiked", "SWunspiked", "P1unspiked", "P2unspiked", "S1unspiked", "S2unspiked")
+#i <- c("Allunspiked") #validation purposes
+#c("P1spiked", "P1unspiked", "P2spiked", "P2unspiked", "S1spiked", "S1unspiked", "S2spiked", "S2unspiked") 
+#All, Allspiked, Allunspiked, PF, PFspiked, PFunspiked, SW, SWspiked, SWunspiked, P1, P1spiked, P1unspiked, P2, P2spiked, P2unspiked, S1, S1spiked, S1unspiked, S2, S2spiked, S2unspiked  
+
+#Subset experiment, Experiment_Type. (Meaningfull combinations of subset and SubExp: HX=All, FTX=P1&S1, LTX=P1&S1, LPSX=All unspiked, HXFTX=P1&S1, HXLTX=P1&S1, HXLPSX=All unspiked, HXLTXLPSX=P1&S1 unspiked)
+SubExp<-"All" #HX, FTX, LTX, LPSX, HXFTX, HXLTX, HXLPSX, HXLTXLPSX, HXFTXLTX, All 
+
+#Subset Frozen Unfrozen
+SubFre<-"Both" #Frozen, Unfrozen, Both
+
+#Creating tables for all individual tests. Additional overview of p-values created. To see evaluation plots remove hashtags. Using for loop to go through Subset vector
+
+#Make empty dataframe to add p-values
+dfp<-data.frame()
+dfp<-data.frame(Test=c("adonis", "betadisperAnova", "betadisperPermutest"))
+dfp2<-data.frame()
+dfp2<-data.frame(Test=c("adonisExperiment", "adonisTemp", "adonisLibprep", "adonisSeqplat", "adonisTime", "adonisFTC"))
+
+for (i in Subset) {
+#Removing negative and positive controls
+Metadata2<-filter(Metadata, Sample_type_simple=="Sample")
+
+#Subsetting Metadata2
+if (i=="Allspiked") {
+  Metadata2<-filter(Metadata2, SpikedUnspiked == "Spiked")
+} else if (i=="Allunspiked") {
+  Metadata2<-filter(Metadata2, SpikedUnspiked == "Unspiked")
+} else if (i=="PF") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_1" | Experiment == "Pig_feces_2")
+} else if (i=="PFspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1_spiked" | Sample_type == "Pig_feces_2_spiked")
+} else if (i=="PFunspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1" | Sample_type == "Pig_feces_2")
+} else if (i=="SW") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_1" | Experiment == "Sewage_2")
+} else if (i=="SWspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1_spiked" | Sample_type == "Sewage_2_spiked")
+} else if (i=="SWunspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1" | Sample_type == "Sewage_2")
+} else if (i=="P1") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_1")
+} else if (i=="P1spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1_spiked")
+} else if (i=="P1unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1")
+} else if (i=="P2") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_2")
+} else if (i=="P2spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_2_spiked")
+} else if (i=="P2unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_2")
+} else if (i=="S1") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_1")
+} else if (i=="S1spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1_spiked")
+} else if (i=="S1unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1")
+} else if (i=="S2") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_2")
+} else if (i=="S2spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_2_spiked")
+} else if (i=="S2unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_2")
+} else if (i=="All") {
+  print("No subsetting, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+#Further subsetting Metadata2
+if (SubExp=="HX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment")
+} else if (SubExp=="FTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Freeze_thaw_experiment")
+} else if (SubExp=="LTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="LPSX") {
+  Metadata22<-filter(Metadata2, Experiment_type == "Library_prep_seq_platform_experiment")
+  VectorLPSX <- unique(Metadata22$Matching_samples)
+  Metadata2<-filter(Metadata2, Matching_samples %in% VectorLPSX)
+  rm(VectorLPSX, Metadata22)
+} else if (SubExp=="HXFTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Freeze_thaw_experiment")
+} else if (SubExp=="HXLTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="HXLPSX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Library_prep_seq_platform_experiment")
+} else if (SubExp=="HXLTXLPSX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Long_term_storage_experiment" | Experiment_type == "Library_prep_seq_platform_experiment")
+} else if (SubExp=="HXFTXLTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Freeze_thaw_experiment" | Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="All") {
+  print("No subsetting, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+#Further subsetting Metadata2
+if (SubFre=="Frozen") {
+  Metadata2<-filter(Metadata2, FrozenUnfrozenSimple == "Freezer")
+} else if (SubFre=="Unfrozen") {
+  Metadata2<-filter(Metadata2, FrozenUnfrozenSimple == "Unfrozen")
+} else if (SubFre=="Both") {
+  print("No subsetting, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+#Removing the Kappa NextSeq run
+Metadata2<-Metadata2[grep("\\KANS.*", Metadata2$Sample, invert=TRUE),]
+
+#Applying subsetting to OTU tables 
+Tax2<-dplyr::select(Tax, one_of(Metadata2$Sample))
+
+#filtering of the Counttable depending on rowSums. 
+Tax2 <- Tax2[rowSums(Tax2)>0,] #Removing all rows that only contains zeroes
+Tax2 <- Tax2[rowSums(Tax2)>(5*ncol(Tax2)),] #Removing all rows(Species) that is below an average count of 5
+# replace 0 values with an estimate using simple multiplicative replacement
+Tax2 <- t(cmultRepl(t(Tax2), method="CZM", label=0))
+#Maks TSS
+Tax2<-as.matrix(t(sweep(Tax2, 2, colSums(Tax2), FUN="/"))) #Transpose to have genera as columns and samples as rows
+
+Metadata2$Time<-as.character(Metadata2$Time)
+
+#Make column that combine lib prep and seq platform
+Metadata2$Allpar<-paste(Metadata2$StoragePlacementType, Metadata2$Library_preparation, Metadata2$Sequencing_platform, Metadata2$Time, Metadata2$Freeze_thaw_cycles, sep="_") #Be aware that Nextera 1 & 2 are analyzed as one group, you could argue that it should be done seperately
+
+#Calculate sample-distance matrix 
+distmatrix <- vegdist(ilr(Tax2), method="euclidean") 
+
+#Which factor to test can pick Metadata2 columns consider including both library preparation and sequencing platform individually in the model
+Test_Factor <- "Allpar" #LPSP, Library_preparation, Sequencing_platform
+#Test_Factor <- "Library_preparation + Sequencing_platform" #Does not work with betadisper
+#Create design formula
+design <- formula(paste("distmatrix"," ~ ", Test_Factor, sep=""))
+if (i=="Allunspiked" | i=="PFunspiked" | i=="SWunspiked") {
+  design2 <- formula(paste("distmatrix"," ~ ", "Experiment+", "StoragePlacementType+", "Library_preparation+", "Sequencing_platform+", "Time+", "Freeze_thaw_cycles" , sep=""))
+  print(design2)
+} else {
+  design2 <- formula(paste("distmatrix"," ~ ", "StoragePlacementType+", "Library_preparation+", "Sequencing_platform+", "Time+", "Freeze_thaw_cycles" , sep="")) 
+  print(design2)
+}
+
+#design2 <- formula(paste("distmatrix"," ~ ", "Experiment*", "StoragePlacementType*", "Library_preparation*", "Sequencing_platform" , sep=""))
+#adonis can handle both continous and factor predictors 
+set.seed(999)
+adonisObject<-adonis2(design, Metadata2, by="terms", perm=999) #, perm=999 can increase to get exact p-values
+set.seed(999)
+adonisObject2<-adonis2(design2, Metadata2, by="terms", perm=999)
+#adonisObject #If significant then difference between groups 
+#Sys.sleep(1)
+write.table(data.frame(adonisObject), file=paste(i, "Adonis", "_", Test_Factor, ".txt", sep=""), sep="\t", dec=".", row.names = T, quote = F)
+write.table(data.frame(adonisObject2), file=paste("All", i, "Adonis", "_", ".txt", sep=""), sep="\t", dec=".", row.names = T, quote = F)
+
+#### Evaluating the model assumptions  
+TestModel <- with(Metadata2, betadisper(distmatrix, Allpar)) #Also have to change here LPSP, Library_preparation, Sequencing_platform. Can not run betadisper with multiple independant variables
+#TestModel
+#plot(TestModel)
+plot(TestModel, label=FALSE)
+#boxplot(TestModel)
+#anova(TestModel)
+anovaTestModel<-anova(TestModel) #p>0.05 -> Assumption met
+write.table(data.frame(anova(TestModel)), file=paste(i, "Betadisper", "_", Test_Factor, ".txt", sep=""), sep="\t", dec=".", row.names = T, quote = F)
+set.seed(999)
+#permutest(TestModel)
+permy<-permutest(TestModel) 
+#data.frame(permy$tab)
+write.table(data.frame(permy$tab), file=paste(i, "Permutest", "_", Test_Factor, ".txt", sep=""), sep="\t", dec=".", row.names = T, quote = F)
+#p>0.05 -> Assumption met
+
+TukeyHSD(TestModel, perm=999) #Increasing perm does not change p adj
+dfp[paste(i)]<-c(adonisObject$`Pr(>F)`[1], anovaTestModel$`Pr(>F)`[1], permy$tab$`Pr(>F)`[1])
+dfp2[paste(i)]<-c(adonisObject2$`Pr(>F)`[1])
+
+if (i=="Allunspiked" | i=="PFunspiked" | i=="SWunspiked") {
+  dfp2[paste(i)]<-c(adonisObject2$`Pr(>F)`[1], adonisObject2$`Pr(>F)`[2], adonisObject2$`Pr(>F)`[3], adonisObject2$`Pr(>F)`[4], adonisObject2$`Pr(>F)`[5], adonisObject2$`Pr(>F)`[6])
+} else {
+  dfp2[paste(i)]<-c("Na", adonisObject2$`Pr(>F)`[1], adonisObject2$`Pr(>F)`[2], adonisObject2$`Pr(>F)`[3], adonisObject2$`Pr(>F)`[4], adonisObject2$`Pr(>F)`[5])
+}
+
+}
+
+write.table(dfp, file=paste("Pvalues", Test_Factor, ".txt", sep=""), sep="\t", dec=".", row.names = T, quote = F)
+write.table(dfp2, file=paste("AllPvalues", ".txt", sep=""), sep="\t", dec=".", row.names = T, quote = F)
+
+#p-values from tests
+#adonis if significant there is a difference between groups defined by Test_Factor  
+#betadisper - Anova and Permutest differences in group homogeneities are not violated if above 0.05 
+kable(dfp, caption=paste(Test_Factor))
+
+kable(dfp2, caption="Testing all parameters simultaneously")
+
+```
+
+
+### PCA Long term storage
+Subset to P1, P2, S1 and S2 
+```{r}
+rm(list=setdiff(ls(), c("Metadata", "Feature", "Tax")))
+
+#Subset data pig feces 1 and 2 (P1, P2), Sewage 1 and 2 (S1, S2), or spiked unspiked
+Subset<- c("P1spiked", "P1unspiked", "S1spiked", "S1unspiked") #All, Allspiked, Allunspiked, PF, SW, P1, P1spiked, P1unspiked, P2, P2spiked, P2unspiked, S1, S1spiked, S1unspiked, S2, S2spiked, S2unspiked       
+
+#Subset experiment, Experiment_Type. (Meaningfull combinations of subset and SubExp: HX=All, FTX=P1&S1, LTX=P1&S1, LPSX=All unspiked, HXFTX=P1&S1, HXLTX=P1&S1, HXLPSX=All unspiked, HXLTXLPSX=P1&S1 unspiked)
+SubExp<-"LTX" #HX, FTX, LTX, LPSX, HXFTX, HXLTX, HXLPSX, HXLTXLPSX, HXFTXLTX, All 
+
+#Subset Frozen Unfrozen
+SubFre<-"Both" #Frozen, Unfrozen, Both
+
+# Create a list to hold the plot objects.
+ScreeList <- list()
+StressList <- list()
+PCAList <- list()
+vec<-vector()
+
+for (i in Subset) {
+#Removing negative and positive controls
+Metadata2<-filter(Metadata, Sample_type_simple=="Sample")
+
+#Subsetting Metadata2
+if (i=="Allspiked") {
+  Metadata2<-filter(Metadata2, SpikedUnspiked == "Spiked")
+} else if (i=="Allunspiked") {
+  Metadata2<-filter(Metadata2, SpikedUnspiked == "Unspiked")
+} else if (i=="PF") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_1" | Experiment == "Pig_feces_2")
+} else if (i=="SW") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_1" | Experiment == "Sewage_2")
+} else if (i=="P1") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_1")
+} else if (i=="P1spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1_spiked")
+} else if (i=="P1unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1")
+} else if (i=="P2") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_2")
+} else if (i=="P2spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_2_spiked")
+} else if (i=="P2unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_2")
+} else if (i=="S1") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_1")
+} else if (i=="S1spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1_spiked")
+} else if (i=="S1unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1")
+} else if (i=="S2") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_2")
+} else if (i=="S2spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_2_spiked")
+} else if (i=="S2unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_2")
+} else if (i=="All") {
+  print("No subsetting Subset, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+Metadata2$LPSP<-paste(Metadata2$Library_preparation, Metadata2$Sequencing_platform, sep="_")
+
+#Further subsetting Metadata2
+if (SubExp=="HX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment")
+} else if (SubExp=="FTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Freeze_thaw_experiment")
+} else if (SubExp=="LTX") {
+  Metadata2<-filter(Metadata2, LPSP == "Kappa_Hiseq")
+} else if (SubExp=="LPSX") {
+  Metadata22<-filter(Metadata2, Experiment_type == "Library_prep_seq_platform_experiment")
+  VectorLPSX <- unique(Metadata22$Matching_samples)
+  Metadata2<-filter(Metadata2, Matching_samples %in% VectorLPSX)
+  rm(VectorLPSX, Metadata22)
+} else if (SubExp=="HXFTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Freeze_thaw_experiment")
+} else if (SubExp=="HXLTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="HXLPSX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Library_prep_seq_platform_experiment")
+} else if (SubExp=="HXLTXLPSX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Long_term_storage_experiment" | Experiment_type == "Library_prep_seq_platform_experiment")
+} else if (SubExp=="HXFTXLTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Freeze_thaw_experiment" | Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="All") {
+  print("No subsetting SubExp, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+#Further subsetting Metadata2
+if (SubFre=="Frozen") {
+  Metadata2<-filter(Metadata2, FrozenUnfrozenSimple == "Freezer")
+} else if (SubFre=="Unfrozen") {
+  Metadata2<-filter(Metadata2, FrozenUnfrozenSimple == "Unfrozen")
+} else if (SubFre=="Both") {
+  print("No subsetting SubFre, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+
+#Removing the Kappa NextSeq run
+Metadata2<-Metadata2[grep("\\KANS.*", Metadata2$Sample, invert=TRUE),]
+
+#Applying subsetting to OTU tables 
+Tax2<-dplyr::select(Tax, one_of(Metadata2$Sample))
+
+## Create grouping factor
+#colnames(Tax2)==Metadata$Sample #Checking order
+#New data adding line between same samples different lib prep and seq plat
+#Metadata2$Sample_LPSX <- 
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*_HX_*", Metadata2$Sample), "NFHI",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*KAHI*", Metadata2$Sample), "KAHI",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*NFNS*", Metadata2$Sample), "NFNS",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*NX1NS*", Metadata2$Sample), "NX1NS",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*NX2NS*", Metadata2$Sample), "NX2NS",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*KANS*", Metadata2$Sample), "KANS",
+#               "Other")))))) #The seq along returns true or false where the regex is fulfilled and then stores the evaluated string on the new column be aware HX is actually true 1-8 don't know why
+
+
+## Can use different filtering strategies. 1 Bayseian approach estimating zeroes, 2 offset of 1 and removing all rows containing zeroes. Only minor effects observed 
+# f <- codaSeq.filter(ak_op, min.reads=1000, min.prop=0.005, min.occurrence=0.2, samples.by.row=FALSE) #Implemented in Gloors codaSeq.filter function
+#Assessing what is the max value of rows containing a zero
+print("Max in rows containing a zero")
+row_sub = apply(Tax2, 1, function(row) any(row !=0 ))
+Tax2[row_sub,] %>% max() %>% print()
+# filtering of the Counttable depending on rowSums. 
+Tax2 <- Tax2[rowSums(Tax2)>0,] #Removing all rows that only contains zeroes
+Tax2 <- Tax2[rowSums(Tax2)>(5*ncol(Tax2)),] #Removing all rows(Species)  that is below an average count of 5.
+# replace 0 values with an estimate using simple multiplicative replacement
+Tax2 <- t(cmultRepl(t(Tax2), method="CZM", label=0))
+
+## Maks TSS
+Tax2<-sweep(Tax2, 2, colSums(Tax2), FUN="/")
+
+#Y <- Metadata2$Sample_LPSX
+
+PCACoDa = pca(t(Tax2), ncomp = 10, logratio = 'ILR')#Can change CLR and ILR
+#plot(PCACoDa)
+
+#plotIndiv(PCACoDa, 
+#        comp = c(1,2), # the components to plot
+#        pch = 16, 
+#        ind.names = F, 
+#        group = Y, 
+#        col.per.group = color.mixo(1:5),
+#        legend = TRUE,
+#        title = 'PCA comp 1 - 2')
+
+# Calculate the variation explained by PCoA1 and 2
+# and use it to generate axis labels
+eig_1 <- paste("PCA1", round(PCACoDa$explained_variance[1]*100, digits = 1), "% variance")
+eig_2 <- paste("PCA2", round(PCACoDa$explained_variance[2]*100, digits = 1), "% variance")
+eig_3 <- paste("PCA3", round(PCACoDa$explained_variance[3]*100, digits = 1), "% variance")
+eig_4 <- paste("PCA4", round(PCACoDa$explained_variance[4]*100, digits = 1), "% variance")
+
+##Pull out coordinates for plotting from the ca object
+#Structuring to add to metadata
+PCAMeta<-data.frame(Sample=PCACoDa$names$sample, PCA1=PCACoDa$variates$X[,1], PCA2=PCACoDa$variates$X[,2], PCA3=PCACoDa$variates$X[,3], PCA4=PCACoDa$variates$X[,4])
+#Merge according to 
+Metadata2<-merge(Metadata2, PCAMeta, by="Sample")
+#Creating column in metadata for plotting with lines between replicates
+Metadata2$Sample_name_norep<-gsub("*_a|*_b|*_c", "", Metadata2$Sample_name)
+#Change time to characters for plotting
+Metadata2$Time<-as.character(Metadata2$Time)
+
+
+#Change order for coloring
+Metadata2$StoragePlacementType<-ordered(Metadata2$StoragePlacementType, levels=c("Nothing", "Freezer", "FreezerDeep"))
+#Change order for shape
+Metadata2$Time<-ordered(Metadata2$Time, levels=c("0", "64", "2880", "5760", "8640"))
+
+
+#Create plot name
+pltName <- paste( 'PCA', i, sep = '' )
+#create PCA
+PCAList[[ pltName ]] <- ggplot(Metadata2) + 
+  geom_point(aes(PCA1, PCA2, color = StoragePlacementType, group = Sample, shape = Time), size=5) +
+  #geom_line(aes(x=PCA1, y=PCA2, group=Replicate_Boxplot)) + 
+  geom_line(aes(x=PCA1, y=PCA2, group=Matching_samples), size=0.1, linetype="dotted") +
+  scale_color_manual(values=c(Freezer = "#92c5de", FreezerDeep = "#0571b0", Nothing = "#999999")) +
+  scale_shape_manual(values=c("0" = 8, "64" = 18, "2880" = 15, "5760" = 16, "8640" = 17)) +
+  ggtitle(paste("PCA", i, sep=" ")) + 
+  labs(colour="Processing", shape="Temperature (°C)", x = eig_1, y = eig_2) + 
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title=element_text(size=12), legend.position="none")
+}
+
+
+#Draw PCA
+#No validation plots
+#Have the plots stored in lists
+#lay <- rbind(c(1,2,3,4))
+#Make pdf
+#pdf(paste("PCA", "Genus", "NoVal", ".pdf", sep=""), width=24, height=12)
+#grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP2unspiked, PCAList$PCAS1unspiked, PCAList$PCAS2unspiked, layout_matrix = lay)
+#dev.off()
+#Make format for word
+#png(paste("PCA", "Genus",  "NoVal", ".png", sep=""), width=1200, height=600)
+#grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP2unspiked, PCAList$PCAS1unspiked, PCAList$PCAS2unspiked, layout_matrix = lay)
+#dev.off()
+
+
+#No validation plots
+#Have the plots stored in lists
+lay <- rbind(c(1,2),
+             c(3,4))
+#Make pdf
+pdf(paste("PCALTXSubset", ".pdf", sep=""), width=9, height=6)
+grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP1spiked, PCAList$PCAS1unspiked, PCAList$PCAS1spiked, layout_matrix = lay)
+dev.off()
+#Make format for word
+#png(paste("PCA", "GenusTall",  "NoVal", ".png", sep=""), width=900, height=600)
+#grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP2unspiked, PCAList$PCAS1unspiked, PCAList$PCAS2unspiked, layout_matrix = lay)
+#dev.off()
+
+#Extract legend 
+#legend<-ggplot(Metadata2) + 
+#  geom_point(aes(PCA1, PCA2, color = Sample_LPSX, group = Sample, shape = Temperature), size=1.5) +
+#  #geom_line(aes(x=PCA1, y=PCA2, group=Replicate_Boxplot)) + 
+#  geom_line(aes(x=PCA1, y=PCA2, group=Matching_samples), size=0.1, linetype="dotted") +
+#  scale_color_manual(values=c("#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#e41a1c")) +
+#  scale_shape_manual(values=c(8,18,15,16,17,0,1,2)) +
+#  ggtitle(paste("PCA", i, sep=" ")) + 
+#  labs(colour="Temperature / °C", shape="Processing", x = eig_1, y = eig_2) + 
+#  theme_bw() + 
+#  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title=element_text(size=12))
+#legendplot<-get_legend(legend)
+#pdf(paste("LegendPCA", ".pdf", sep=""), width=24, height=12)
+#grid.arrange(legendplot)
+#dev.off()
+#png(paste("LegendPCA", ".png", sep=""), width=100, height=300)
+#grid.arrange(legendplot)
+#dev.off()
+
+legend2<-ggplot(Metadata2) + 
+  geom_point(aes(PCA1, PCA2, color = StoragePlacementType, group = Sample, shape = Time), size=5) +
+  #geom_line(aes(x=PCA1, y=PCA2, group=Replicate_Boxplot)) + 
+  geom_line(aes(x=PCA1, y=PCA2, group=Matching_samples), size=0.1, linetype="dotted") +
+  scale_color_manual(values=c(Freezer = "#92c5de", FreezerDeep = "#0571b0", Nothing = "#999999")) +
+  scale_shape_manual(values=c("0" = 8, "64" = 18, "2880" = 15, "5760" = 16, "8640" = 17)) +
+  ggtitle(paste("PCA", i, sep=" ")) + 
+  labs(colour="Processing", shape="Temperature / °C", x = eig_1, y = eig_2) + 
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title=element_text(size=12), legend.position="bottom")
+legendplot<-get_legend(legend2)
+pdf(paste("PCALTXSubsetLegend", ".pdf", sep=""), width=10, height=1)
+grid.arrange(legendplot)
+dev.off()
+#png(paste("LegendPCAbottom", ".png", sep=""), width=600, height=25)
+#grid.arrange(legendplot)
+#dev.off()
+
+
+```
+
+### PCA Freeze thaw cycles
+Subset to P1, P2, S1 and S2 
+```{r}
+rm(list=setdiff(ls(), c("Metadata", "Feature", "Tax")))
+
+#Subset data pig feces 1 and 2 (P1, P2), Sewage 1 and 2 (S1, S2), or spiked unspiked
+Subset<- c("P1spiked", "P1unspiked", "S1spiked", "S1unspiked") #All, Allspiked, Allunspiked, PF, SW, P1, P1spiked, P1unspiked, P2, P2spiked, P2unspiked, S1, S1spiked, S1unspiked, S2, S2spiked, S2unspiked       
+
+#Subset experiment, Experiment_Type. (Meaningfull combinations of subset and SubExp: HX=All, FTX=P1&S1, LTX=P1&S1, LPSX=All unspiked, HXFTX=P1&S1, HXLTX=P1&S1, HXLPSX=All unspiked, HXLTXLPSX=P1&S1 unspiked)
+SubExp<-"FTX" #HX, FTX, LTX, LPSX, HXFTX, HXLTX, HXLPSX, HXLTXLPSX, HXFTXLTX, All 
+
+#Subset Frozen Unfrozen
+SubFre<-"Both" #Frozen, Unfrozen, Both
+
+# Create a list to hold the plot objects.
+ScreeList <- list()
+StressList <- list()
+PCAList <- list()
+vec<-vector()
+
+for (i in Subset) {
+#Removing negative and positive controls
+Metadata2<-filter(Metadata, Sample_type_simple=="Sample")
+
+#Subsetting Metadata2
+if (i=="Allspiked") {
+  Metadata2<-filter(Metadata2, SpikedUnspiked == "Spiked")
+} else if (i=="Allunspiked") {
+  Metadata2<-filter(Metadata2, SpikedUnspiked == "Unspiked")
+} else if (i=="PF") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_1" | Experiment == "Pig_feces_2")
+} else if (i=="SW") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_1" | Experiment == "Sewage_2")
+} else if (i=="P1") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_1")
+} else if (i=="P1spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1_spiked")
+} else if (i=="P1unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_1")
+} else if (i=="P2") {
+  Metadata2<-filter(Metadata2, Experiment == "Pig_feces_2")
+} else if (i=="P2spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_2_spiked")
+} else if (i=="P2unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Pig_feces_2")
+} else if (i=="S1") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_1")
+} else if (i=="S1spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1_spiked")
+} else if (i=="S1unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_1")
+} else if (i=="S2") {
+  Metadata2<-filter(Metadata2, Experiment == "Sewage_2")
+} else if (i=="S2spiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_2_spiked")
+} else if (i=="S2unspiked") {
+  Metadata2<-filter(Metadata2, Sample_type == "Sewage_2")
+} else if (i=="All") {
+  print("No subsetting Subset, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+Metadata2$LPSP<-paste(Metadata2$Library_preparation, Metadata2$Sequencing_platform, sep="_")
+
+#Further subsetting Metadata2
+if (SubExp=="HX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment")
+} else if (SubExp=="FTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Freeze_thaw_experiment" | Experiment_type == "Handling_experiment")
+  Metadata2<-filter(Metadata2, FrozenUnfrozen == "Nothing" | FrozenUnfrozen == "Freezer")
+} else if (SubExp=="LTX") {
+  Metadata2<-filter(Metadata2, LPSP == "Kappa_Hiseq")
+} else if (SubExp=="LPSX") {
+  Metadata22<-filter(Metadata2, Experiment_type == "Library_prep_seq_platform_experiment")
+  VectorLPSX <- unique(Metadata22$Matching_samples)
+  Metadata2<-filter(Metadata2, Matching_samples %in% VectorLPSX)
+  rm(VectorLPSX, Metadata22)
+} else if (SubExp=="HXFTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Freeze_thaw_experiment")
+} else if (SubExp=="HXLTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="HXLPSX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Library_prep_seq_platform_experiment")
+} else if (SubExp=="HXLTXLPSX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Long_term_storage_experiment" | Experiment_type == "Library_prep_seq_platform_experiment")
+} else if (SubExp=="HXFTXLTX") {
+  Metadata2<-filter(Metadata2, Experiment_type == "Handling_experiment" | Experiment_type == "Freeze_thaw_experiment" | Experiment_type == "Long_term_storage_experiment")
+} else if (SubExp=="All") {
+  print("No subsetting SubExp, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+#Further subsetting Metadata2
+if (SubFre=="Frozen") {
+  Metadata2<-filter(Metadata2, FrozenUnfrozenSimple == "Freezer")
+} else if (SubFre=="Unfrozen") {
+  Metadata2<-filter(Metadata2, FrozenUnfrozenSimple == "Unfrozen")
+} else if (SubFre=="Both") {
+  print("No subsetting SubFre, all included")
+} else {
+  print("Subset defined not valid")
+}
+
+
+#Removing the Kappa NextSeq run
+Metadata2<-Metadata2[grep("\\KANS.*", Metadata2$Sample, invert=TRUE),]
+
+#Applying subsetting to OTU tables 
+Tax2<-dplyr::select(Tax, one_of(Metadata2$Sample))
+
+## Create grouping factor
+#colnames(Tax2)==Metadata$Sample #Checking order
+#New data adding line between same samples different lib prep and seq plat
+#Metadata2$Sample_LPSX <- 
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*_HX_*", Metadata2$Sample), "NFHI",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*KAHI*", Metadata2$Sample), "KAHI",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*NFNS*", Metadata2$Sample), "NFNS",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*NX1NS*", Metadata2$Sample), "NX1NS",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*NX2NS*", Metadata2$Sample), "NX2NS",
+#        ifelse(seq(along=(Metadata2$Sample)) %in% grep("*KANS*", Metadata2$Sample), "KANS",
+#               "Other")))))) #The seq along returns true or false where the regex is fulfilled and then stores the evaluated string on the new column be aware HX is actually true 1-8 don't know why
+
+
+## Can use different filtering strategies. 1 Bayseian approach estimating zeroes, 2 offset of 1 and removing all rows containing zeroes. Only minor effects observed 
+# f <- codaSeq.filter(ak_op, min.reads=1000, min.prop=0.005, min.occurrence=0.2, samples.by.row=FALSE) #Implemented in Gloors codaSeq.filter function
+#Assessing what is the max value of rows containing a zero
+print("Max in rows containing a zero")
+row_sub = apply(Tax2, 1, function(row) any(row !=0 ))
+Tax2[row_sub,] %>% max() %>% print()
+# filtering of the Counttable depending on rowSums. 
+Tax2 <- Tax2[rowSums(Tax2)>0,] #Removing all rows that only contains zeroes
+Tax2 <- Tax2[rowSums(Tax2)>(5*ncol(Tax2)),] #Removing all rows(Species)  that is below an average count of 5.
+# replace 0 values with an estimate using simple multiplicative replacement
+Tax2 <- t(cmultRepl(t(Tax2), method="CZM", label=0))
+
+## Maks TSS
+Tax2<-sweep(Tax2, 2, colSums(Tax2), FUN="/")
+
+#Y <- Metadata2$Sample_LPSX
+
+PCACoDa = pca(t(Tax2), ncomp = 8, logratio = 'ILR')#Can change CLR and ILR
+#plot(PCACoDa)
+
+#plotIndiv(PCACoDa, 
+#        comp = c(1,2), # the components to plot
+#        pch = 16, 
+#        ind.names = F, 
+#        group = Y, 
+#        col.per.group = color.mixo(1:5),
+#        legend = TRUE,
+#        title = 'PCA comp 1 - 2')
+
+# Calculate the variation explained by PCoA1 and 2
+# and use it to generate axis labels
+eig_1 <- paste("PCA1", round(PCACoDa$explained_variance[1]*100, digits = 1), "% variance")
+eig_2 <- paste("PCA2", round(PCACoDa$explained_variance[2]*100, digits = 1), "% variance")
+eig_3 <- paste("PCA3", round(PCACoDa$explained_variance[3]*100, digits = 1), "% variance")
+eig_4 <- paste("PCA4", round(PCACoDa$explained_variance[4]*100, digits = 1), "% variance")
+
+##Pull out coordinates for plotting from the ca object
+#Structuring to add to metadata
+PCAMeta<-data.frame(Sample=PCACoDa$names$sample, PCA1=PCACoDa$variates$X[,1], PCA2=PCACoDa$variates$X[,2], PCA3=PCACoDa$variates$X[,3], PCA4=PCACoDa$variates$X[,4])
+#Merge according to 
+Metadata2<-merge(Metadata2, PCAMeta, by="Sample")
+#Creating column in metadata for plotting with lines between replicates
+Metadata2$Sample_name_norep<-gsub("*_a|*_b|*_c", "", Metadata2$Sample_name)
+#Change time to characters for plotting
+Metadata2$Freeze_thaw_cycles<-as.character(Metadata2$Freeze_thaw_cycles)
+
+
+#Change order for coloring
+Metadata2$StoragePlacementType<-ordered(Metadata2$StoragePlacementType, levels=c("Nothing", "Freezer", "FreezerDeep"))
+#Change order for shape
+Metadata2$Freeze_thaw_cycles<-ordered(Metadata2$Freeze_thaw_cycles, levels=c("0", "1", "2", "3", "4"))
+
+
+#Create plot name
+pltName <- paste( 'PCA', i, sep = '' )
+#create PCA
+PCAList[[ pltName ]] <- ggplot(Metadata2) + 
+  geom_point(aes(PCA1, PCA2, color = StoragePlacementType, group = Sample, shape = Freeze_thaw_cycles), size=5) +
+  #geom_line(aes(x=PCA1, y=PCA2, group=Replicate_Boxplot)) + 
+  #geom_line(aes(x=PCA1, y=PCA2, group=Matching_samples), size=0.1, linetype="dotted") +
+  scale_color_manual(values=c(Freezer = "#92c5de", FreezerDeep = "#0571b0", Nothing = "#999999")) +
+  scale_shape_manual(values=c("0" = 8, "1" = 18, "2" = 15, "3" = 16, "4" = 17)) +
+  ggtitle(paste("PCA", i, sep=" ")) + 
+  labs(colour="Processing", shape="Temperature (°C)", x = eig_1, y = eig_2) + 
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title=element_text(size=12), legend.position="none")
+}
+
+
+#Draw PCA
+#No validation plots
+#Have the plots stored in lists
+#lay <- rbind(c(1,2,3,4))
+#Make pdf
+#pdf(paste("PCA", "Genus", "NoVal", ".pdf", sep=""), width=24, height=12)
+#grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP2unspiked, PCAList$PCAS1unspiked, PCAList$PCAS2unspiked, layout_matrix = lay)
+#dev.off()
+#Make format for word
+#png(paste("PCA", "Genus",  "NoVal", ".png", sep=""), width=1200, height=600)
+#grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP2unspiked, PCAList$PCAS1unspiked, PCAList$PCAS2unspiked, layout_matrix = lay)
+#dev.off()
+
+
+#No validation plots
+#Have the plots stored in lists
+lay <- rbind(c(1,2),
+             c(3,4))
+#Make pdf
+pdf(paste("PCAFTXSubset", ".pdf", sep=""), width=9, height=6)
+grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP1spiked, PCAList$PCAS1unspiked, PCAList$PCAS1spiked, layout_matrix = lay)
+dev.off()
+#Make format for word
+#png(paste("PCA", "GenusTall",  "NoVal", ".png", sep=""), width=900, height=600)
+#grid.arrange(PCAList$PCAP1unspiked, PCAList$PCAP2unspiked, PCAList$PCAS1unspiked, PCAList$PCAS2unspiked, layout_matrix = lay)
+#dev.off()
+
+#Extract legend 
+#legend<-ggplot(Metadata2) + 
+#  geom_point(aes(PCA1, PCA2, color = Sample_LPSX, group = Sample, shape = Temperature), size=1.5) +
+#  #geom_line(aes(x=PCA1, y=PCA2, group=Replicate_Boxplot)) + 
+#  geom_line(aes(x=PCA1, y=PCA2, group=Matching_samples), size=0.1, linetype="dotted") +
+#  scale_color_manual(values=c("#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#e41a1c")) +
+#  scale_shape_manual(values=c(8,18,15,16,17,0,1,2)) +
+#  ggtitle(paste("PCA", i, sep=" ")) + 
+#  labs(colour="Temperature / °C", shape="Processing", x = eig_1, y = eig_2) + 
+#  theme_bw() + 
+#  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title=element_text(size=12))
+#legendplot<-get_legend(legend)
+#pdf(paste("LegendPCA", ".pdf", sep=""), width=24, height=12)
+#grid.arrange(legendplot)
+#dev.off()
+#png(paste("LegendPCA", ".png", sep=""), width=100, height=300)
+#grid.arrange(legendplot)
+#dev.off()
+
+legend2<-ggplot(Metadata2) + 
+  geom_point(aes(PCA1, PCA2, color = StoragePlacementType, group = Sample, shape = Freeze_thaw_cycles), size=5) +
+  #geom_line(aes(x=PCA1, y=PCA2, group=Replicate_Boxplot)) + 
+  #geom_line(aes(x=PCA1, y=PCA2, group=Matching_samples), size=0.1, linetype="dotted") +
+  scale_color_manual(values=c(Freezer = "#92c5de", FreezerDeep = "#0571b0", Nothing = "#999999")) +
+  scale_shape_manual(values=c("0" = 8, "1" = 18, "2" = 15, "3" = 16, "4" = 17)) +
+  ggtitle(paste("PCA", i, sep=" ")) + 
+  labs(colour="Processing", shape="Temperature / °C", x = eig_1, y = eig_2) + 
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title=element_text(size=12), legend.position="bottom")
+legendplot<-get_legend(legend2)
+pdf(paste("PCAFTXSubsetLegend", ".pdf", sep=""), width=10, height=1)
+grid.arrange(legendplot)
+dev.off()
+#png(paste("LegendPCAbottom", ".png", sep=""), width=600, height=25)
+#grid.arrange(legendplot)
+#dev.off()
+
+
+```
+
